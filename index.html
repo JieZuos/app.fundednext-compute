@@ -1,63 +1,265 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>40% Consistency Rule</title>
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <meta charset="UTF-8">
+  <title>FundedNext Calendar Tracker</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    body { background: #f8f9fa; }
+    .calendar { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+    .day {
+      background: white; border: 1px solid #ddd; min-height: 100px;
+      padding: 4px; cursor: pointer; position: relative;
+      display: flex; flex-direction: column;
+    }
+    .day.disabled { background: #e9ecef; color: #6c757d; cursor: not-allowed; }
+    .day-number { font-weight: bold; font-size: 14px; margin-bottom: 4px; }
+    .day-entry { font-size: 12px; margin-top: auto; }
+    .today { border: 2px solid #0d6efd; }
+  </style>
 </head>
-<body class="bg-light">
+<body>
+<div class="container py-4">
+  <h2 class="mb-3 text-center">📊 FundedNext Calendar Tracker</h2>
 
-<div class="container py-5">
-    <h2 class="text-center mb-4">40% Consistency Rule Calculator</h2>
-    <div class="card p-4 shadow-sm">
-        <div class="mb-3">
-            <label class="form-label">Funded Account Size ($)</label>
-            <input type="number" id="fundedAccount" class="form-control" value="25000">
-        </div>
-        <div class="mb-3">
-            <label class="form-label">Total Profit ($)</label>
-            <input type="number" id="totalProfit" class="form-control" value="1500">
-        </div>
-        <div class="mb-3">
-            <label class="form-label">Profit Today ($)</label>
-            <input type="number" id="todayProfit" class="form-control" value="">
-        </div>
-        <button id="computeBtn" class="btn btn-primary w-100">Compute</button>
+  <!-- Summary -->
+  <div class="card mb-3">
+    <div class="card-body d-flex justify-content-between align-items-center flex-wrap">
+      <div>
+        <p><strong>Total Profit:</strong> $<span id="totalProfit">0</span></p>
+        <p><strong>Highest Day Profit:</strong> $<span id="highestProfit">0</span></p>
+        <p><strong>Consistency:</strong> <span id="consistency">0%</span></p>
+        <p><strong>Status:</strong> <span id="status" class="fw-bold text-danger">❌ Not Eligible</span></p>
+      </div>
+      <div class="d-flex flex-column gap-2">
+        <!--<button id="payoutBtn" class="btn btn-primary">💵 Payout</button>-->
+        <button id="resetBtn" class="btn btn-danger">♻️ Reset</button>
+      </div>
     </div>
+  </div>
 
-    <div class="card mt-4 p-4 shadow-sm">
-        <h5>Results</h5>
-        <p><strong>Today's Profit % of Total:</strong> <span id="percentage" class="fw-bold"></span></p>
-        <p><strong>Status:</strong> <span id="status" class="fw-bold"></span></p>
-    </div>
+  <!-- Calendar Header -->
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <button id="prevMonth" class="btn btn-outline-secondary">&lt;</button>
+    <h4 id="monthYear"></h4>
+    <button id="nextMonth" class="btn btn-outline-secondary">&gt;</button>
+  </div>
+
+  <!-- Calendar -->
+  <div class="calendar border rounded p-2 bg-white" id="calendar"></div>
 </div>
 
 <script>
-$(document).ready(function(){
-    $("#computeBtn").click(function(){
-        let totalProfit = parseFloat($("#totalProfit").val()) || 0;
-        let todayProfit = parseFloat($("#todayProfit").val()) || 0;
+  let profits = JSON.parse(localStorage.getItem("profits")) || [];
+  let currentDate = new Date();
 
-        if(totalProfit <= 0){
-            $("#percentage").text("0%");
-            $("#status").text("❌ Invalid Total Profit").removeClass("text-success").addClass("text-danger");
-            return;
+  function buildCalendar(date) {
+    $("#calendar").empty();
+    const year = date.getFullYear();
+    const month = date.getMonth();
+
+    // Update header
+    const monthName = date.toLocaleString("default", { month: "long" });
+    $("#monthYear").text(`${monthName} ${year}`);
+
+    // First day of the month
+    const firstDay = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+    // Fill blanks
+    for (let i = 0; i < firstDay; i++) {
+      $("#calendar").append(`<div class="day disabled"></div>`);
+    }
+
+    // Days
+    for (let d = 1; d <= daysInMonth; d++) {
+      let dayDate = new Date(year, month, d);
+      let isoDate = dayDate.toISOString().split("T")[0];
+      let isWeekend = dayDate.getDay() === 0 || dayDate.getDay() === 6;
+      let entry = profits.find(p => p.date === isoDate);
+
+      let cell = $(`<div class="day ${isWeekend ? "disabled" : ""}"></div>`);
+      if (isoDate === new Date().toISOString().split("T")[0]) {
+        cell.addClass("today");
+      }
+      cell.append(`<div class="day-number">${d}</div>`);
+      if (entry) {
+        cell.append(`<div class="day-entry">$${entry.profit}<br><small>${entry.journal}</small></div>`);
+      }
+
+      if (!isWeekend) {
+        cell.click(() => openEntryModal(isoDate));
+      }
+      $("#calendar").append(cell);
+    }
+
+    updateSummary();
+  }
+
+function openEntryModal(date) {
+  Swal.fire({
+    title: `Add Entry (${date})`,
+    html: `
+      <select id="entryType" class="swal2-select">
+        <option value="profit" selected>Profit</option>
+        <option value="payout">Payout</option>
+      </select>
+      <input type="number" id="amountInput" class="swal2-input" placeholder="Amount ($)">
+      <textarea id="journalInput" class="swal2-textarea" placeholder="Journal Lesson (optional)"></textarea>
+    `,
+    confirmButtonText: 'Save',
+    showCancelButton: true,
+    didOpen: () => {
+      // Hide journal input if payout is selected
+      const entryType = document.getElementById("entryType");
+      const journalInput = document.getElementById("journalInput");
+      entryType.addEventListener("change", () => {
+        journalInput.style.display = entryType.value === "profit" ? "block" : "none";
+      });
+    },
+    preConfirm: () => {
+      const type = document.getElementById("entryType").value;
+      const amount = parseFloat(document.getElementById("amountInput").value);
+      const journal = document.getElementById("journalInput").value;
+
+      if (isNaN(amount) || amount <= 0) {
+        Swal.showValidationMessage("Please enter a valid amount");
+        return false;
+      }
+
+      if (type === "payout") {
+        // validate against total available balance
+        let total = profits.reduce((a, b) => a + b.profit, 0);
+        if (amount > total) {
+          Swal.showValidationMessage("Payout cannot exceed total profit");
+          return false;
         }
+      }
 
-        let percentage = (todayProfit / totalProfit) * 100;
+      return { type, amount, journal };
+    }
+  }).then(result => {
+    if (result.isConfirmed) {
+      const { type, amount, journal } = result.value;
 
-        $("#percentage").text(percentage.toFixed(2) + "%");
+      profits.push({
+        date,
+        profit: type === "payout" ? -amount : amount,
+        journal: type === "payout" ? "Payout" : journal
+      });
 
-        if(percentage <= 40){
-            $("#status").text("✅ Rule Passed").removeClass("text-danger").addClass("text-success");
-        } else {
-            $("#status").text("❌ Rule Failed").removeClass("text-success").addClass("text-danger");
-        }
+      localStorage.setItem("profits", JSON.stringify(profits));
+      buildCalendar(currentDate);
+    }
+  });
+}
+
+  function updateSummary() {
+    let total = 0, highest = 0;
+    profits.forEach(p => {
+      total += p.profit;
+      if (p.profit > highest) highest = p.profit;
     });
-});
-</script>
 
+    let consistency = total > 0 ? (highest / total) * 100 : 0;
+    let eligible = consistency <= 40 && total >= 250;
+
+    $("#totalProfit").text(total.toFixed(2));
+    $("#highestProfit").text(highest.toFixed(2));
+    $("#consistency").text(consistency.toFixed(2) + "%");
+    $("#status")
+      .text(eligible ? "✅ Eligible" : "❌ Not Eligible")
+      .removeClass("text-danger text-success")
+      .addClass(eligible ? "text-success" : "text-danger");
+  }
+
+$("#payoutBtn").click(function () {
+  let total = profits.reduce((a, b) => a + b.profit, 0);
+  let highest = Math.max(...profits.map(p => p.profit), 0);
+  let consistency = total > 0 ? (highest / total) * 100 : 0;
+  let eligible = consistency <= 40 && total >= 250;
+
+  if (!eligible) {
+    Swal.fire(
+      "Not Eligible",
+      "You must meet consistency ≤ 40% and have at least $250 total profit before requesting payout.",
+      "error"
+    );
+    return;
+  }
+
+  Swal.fire({
+    title: "Request Payout",
+    html: `
+      <input type="number" id="payoutAmount" class="swal2-input" placeholder="Enter payout amount ($)">
+      <input type="date" id="payoutDate" class="swal2-input">
+    `,
+    showCancelButton: true,
+    confirmButtonText: "Withdraw",
+    preConfirm: () => {
+      const payout = parseFloat(document.getElementById("payoutAmount").value);
+      const payoutDate = document.getElementById("payoutDate").value;
+
+      if (isNaN(payout) || payout <= 0 || payout > total) {
+        Swal.showValidationMessage("Invalid payout amount");
+        return false;
+      }
+      if (!payoutDate) {
+        Swal.showValidationMessage("Please select a payout date");
+        return false;
+      }
+
+      return { payout, payoutDate };
+    }
+  }).then(result => {
+    if (result.isConfirmed) {
+      const { payout, payoutDate } = result.value;
+
+      // Record payout entry separately without wiping profits
+      profits.push({
+        date: payoutDate,
+        profit: -payout,
+        journal: "Payout"
+      });
+
+      localStorage.setItem("profits", JSON.stringify(profits));
+      Swal.fire("Success", `Payout of $${payout} recorded on ${payoutDate}.`, "success");
+      buildCalendar(currentDate);
+    }
+  });
+});
+
+  $("#resetBtn").click(function() {
+    Swal.fire({
+      title: "Reset All Data?",
+      text: "This will permanently delete all profits and journals.",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonText: "Yes, reset it!"
+    }).then(res => {
+      if (res.isConfirmed) {
+        profits = [];
+        localStorage.removeItem("profits");
+        buildCalendar(currentDate);
+        Swal.fire("Reset", "All data has been cleared.", "success");
+      }
+    });
+  });
+
+  // Navigation
+  $("#prevMonth").click(() => {
+    currentDate.setMonth(currentDate.getMonth() - 1);
+    buildCalendar(currentDate);
+  });
+  $("#nextMonth").click(() => {
+    currentDate.setMonth(currentDate.getMonth() + 1);
+    buildCalendar(currentDate);
+  });
+
+  // Init
+  buildCalendar(currentDate);
+</script>
 </body>
 </html>
